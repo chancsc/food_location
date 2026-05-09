@@ -28,34 +28,47 @@ def _db() -> FoodDatabase:
     return FoodDatabase(DB_PATH)
 
 
-def _format_shop_zh(shop: dict) -> str:
-    """Render a shop record in Simplified Chinese."""
+def _parse_food_types(raw) -> list[str]:
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        return raw
+    try:
+        return json.loads(raw)
+    except Exception:
+        return [raw]
+
+
+def _format_shop_card(shop: dict) -> str:
+    """Render a shop record as a markdown card (rendered by chat interfaces)."""
+    name = shop.get("shop_name") or "未知"
+    food_types = _parse_food_types(shop.get("food_types"))
+    rating = shop.get("rating")
+    url = shop.get("google_maps_url")
+
     lines: list[str] = []
 
-    lines.append(f"店名      : {shop.get('shop_name') or '未知'}")
+    lines.append(f"### 🏪 {name}")
+    lines.append("")
 
-    food_types = shop.get("food_types") or "[]"
-    if isinstance(food_types, str):
-        try:
-            food_types = json.loads(food_types)
-        except Exception:
-            food_types = [food_types]
     if food_types:
-        lines.append(f"食物类型  : {' | '.join(food_types)}")
-
+        lines.append(f"🍜 **食物类型** &nbsp; {' · '.join(food_types)}")
     if shop.get("location"):
-        lines.append(f"地区      : {shop['location']}")
+        lines.append(f"📍 **地区** &nbsp; {shop['location']}")
     if shop.get("address"):
-        lines.append(f"地址      : {shop['address']}")
-    if shop.get("rating"):
-        stars = round(shop["rating"])
-        lines.append(f"评分      : {'★' * stars}{'☆' * (5 - stars)}  {shop['rating']}/5")
-    if shop.get("google_maps_url"):
-        lines.append(f"Google 地图: {shop['google_maps_url']}")
+        lines.append(f"🗺️ **地址** &nbsp; {shop['address']}")
+    if rating:
+        filled = round(rating)
+        stars = "★" * filled + "☆" * (5 - filled)
+        lines.append(f"⭐ **评分** &nbsp; {stars} &nbsp; {rating} / 5")
     if shop.get("description"):
-        lines.append(f"推荐理由  : {shop['description']}")
+        lines.append(f"💬 **推荐** &nbsp; {shop['description']}")
+    if url:
+        lines.append(f"🔗 **地图** &nbsp; [Google 地图]({url})")
 
-    lines.append(f"记录 ID   : {shop.get('id')}")
+    lines.append("")
+    lines.append(f"> `ID: {shop.get('id')}`")
+
     return "\n".join(lines)
 
 
@@ -121,8 +134,8 @@ def ingest(extracted_json: str | None, location: str | None):
     shop_id = db.add_shop(extracted, google_info)
     shop = db.get_shop(shop_id)
 
-    click.echo("\n已成功储存：\n")
-    click.echo(_format_shop_zh(shop))
+    click.echo("\n✅ 已成功储存\n")
+    click.echo(_format_shop_card(shop))
 
 
 @cli.command()
@@ -146,10 +159,11 @@ def find(food_type: str, location: str | None, json_output: bool):
         click.echo(f"抱歉，暂无「{food_type}」{loc_label}的店铺记录。")
         return
 
-    click.echo(f"找到 {len(results)} 家店铺提供「{food_type}」{loc_label}：\n")
+    click.echo(f"## 🔍 找到 {len(results)} 家「{food_type}」店铺{loc_label}\n")
     for i, shop in enumerate(results, 1):
-        click.echo(f"── 第 {i} 家 ──")
-        click.echo(_format_shop_zh(shop))
+        click.echo(f"---\n")
+        click.echo(f"**第 {i} 家**\n")
+        click.echo(_format_shop_card(shop))
         click.echo()
 
 
@@ -170,10 +184,10 @@ def list_shops(location: str | None, json_output: bool):
         return
 
     loc_label = f"（{location} 地区）" if location else ""
-    click.echo(f"共 {len(results)} 家店铺记录{loc_label}：\n")
+    click.echo(f"## 📋 共 {len(results)} 家店铺记录{loc_label}\n")
     for i, shop in enumerate(results, 1):
-        click.echo(f"── {i}. {shop.get('shop_name')} ──")
-        click.echo(_format_shop_zh(shop))
+        click.echo(f"---\n")
+        click.echo(_format_shop_card(shop))
         click.echo()
 
 
@@ -211,8 +225,8 @@ def refresh(shop_id: int):
 
     db.update_google_info(shop_id, google_info)
     updated = db.get_shop(shop_id)
-    click.echo("\n已更新：\n")
-    click.echo(_format_shop_zh(updated))
+    click.echo("\n✅ 已更新\n")
+    click.echo(_format_shop_card(updated))
 
 
 if __name__ == "__main__":
