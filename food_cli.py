@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""美食地点助手 CLI — 从截图记录美食店铺，并按食物类型查询。"""
+"""美食地点助手 CLI — 储存美食店铺信息，按食物类型或地区查询。
+
+摄取流程由 nanobot 负责：
+  nanobot 将截图发送给 LLM → 获取 JSON 提取结果 → 调用 ingest 命令存入数据库。
+"""
 
 import json
 import os
 import sys
-from pathlib import Path
 
 import click
 from dotenv import load_dotenv
 
 from database import FoodDatabase
 from places import fallback_maps_search_url, search_google_places
-from vision import extract_from_screenshot
 
 load_dotenv()
 
@@ -57,61 +59,66 @@ def _format_shop_zh(shop: dict) -> str:
     return "\n".join(lines)
 
 
-def _enrich_with_google(shop_name: str, location: str, extracted: dict) -> dict | None:
-    """Try Google Places; fall back to a search URL if no API key."""
-    google_info = search_google_places(shop_name, location)
-    if google_info:
-        return google_info
-
-    # No API key — attach a best-effort Maps search link
-    maps_url = fallback_maps_search_url(shop_name, location)
-    return {"google_maps_url": maps_url}
-
-
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
 @click.group()
 def cli():
-    """美食地点助手\n\n记录截图中的美食店铺，按食物类型或地区查询。"""
+    """美食地点助手\n\n储存截图提取结果，按食物类型或地区查询。"""
 
 
 @cli.command()
-@click.argument("image_path")
-@click.option("-l", "--location", default=None, help="地区提示（如：芙蓉、Seremban）")
-def ingest(image_path: str, location: str | None):
-    """从截图提取店铺信息并存入数据库。
+@click.argument("extracted_json", required=False)
+@click.option("-l", "--location", default=None,
+              help="覆盖或补充地区信息（如：芙蓉、Seremban）")
+def ingest(extracted_json: str | None, location: str | None):
+    """储存 LLM 提取的店铺 JSON 并enriched Google 地图信息。
 
-    IMAGE_PATH 为本地图片路径（JPG / PNG / WEBP / GIF）。
+    EXTRACTED_JSON 为 JSON 字符串，可省略并改为从 stdin 读取。
+
+    必填字段：shop_name
+    可选字段：food_types (list)、location、address、description
+
+    示例（nanobot 调用方式）：
+
+    \b
+    python food_cli.py ingest '{"shop_name":"老爸肉骨茶","food_types":["肉骨茶"],"location":"芙蓉"}'
+
+    \b
+    echo '{"shop_name":"..."}' | python food_cli.py ingest
     """
-    path = Path(image_path)
-    if not path.exists():
-        click.echo(f"错误：找不到文件 {image_path}", err=True)
-        sys.exit(1)
-
-    click.echo(f"正在分析图片：{image_path} …")
+    if extracted_json is None:
+        if not sys.stdin.isatty():
+            extracted_json = sys.stdin.read().strip()
+        else:
+            click.echo("错误：请提供 JSON 字符串参数或通过 stdin 传入。", err=True)
+            sys.exit(1)
 
     try:
-        extracted = extract_from_screenshot(str(path), location_hint=location)
-    except Exception as exc:
-        click.echo(f"错误：无法解析图片 — {exc}", err=True)
+        extracted: dict = json.loads(extracted_json)
+    except json.JSONDecodeError as exc:
+        click.echo(f"错误：JSON 解析失败 — {exc}", err=True)
         sys.exit(1)
 
-    if not extracted or not extracted.get("shop_name"):
-        click.echo("错误：图片中未能识别出店铺信息，请提供更清晰的截图。", err=True)
+    if not extracted.get("shop_name"):
+        click.echo("错误：JSON 中缺少必填字段 shop_name。", err=True)
         sys.exit(1)
+
+    # Allow CLI --location to fill in a missing location
+    if location and not extracted.get("location"):
+        extracted["location"] = location
 
     shop_name = extracted["shop_name"]
-    loc = extracted.get("location") or location or ""
+    loc = extracted.get("location") or ""
 
-    click.echo(f"已识别店铺：{shop_name}（{loc}）")
-    click.echo("正在查询 Google 地图信息 …")
-
-    google_info = _enrich_with_google(shop_name, loc, extracted)
+    # Enrich with Google Places (or generate a fallback search URL)
+    google_info = search_google_places(shop_name, loc)
+    if not google_info:
+        google_info = {"google_maps_url": fallback_maps_search_url(shop_name, loc)}
 
     db = _db()
-    shop_id = db.add_shop(extracted, google_info, source_image=str(path))
+    shop_id = db.add_shop(extracted, google_info)
     shop = db.get_shop(shop_id)
 
     click.echo("\n已成功储存：\n")

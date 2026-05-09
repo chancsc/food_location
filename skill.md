@@ -2,50 +2,63 @@
 
 ## Purpose
 
-This skill lets the nanobot agent record food shops from screenshots and answer user questions like "哪里有肉骨茶？" ("Where can I find bak kut teh?") — replies are always in **Simplified Chinese**.
+Store food shop records extracted from screenshots and answer user questions like "芙蓉哪里有肉骨茶？" ("Where can I find bak kut teh in Seremban?").
 
-The underlying tool is a Python CLI (`food_cli.py`) backed by a local SQLite database enriched with Google Maps data.
+**Division of responsibility:**
+
+| Who | What |
+|---|---|
+| **nanobot** | Receives screenshot → sends to LLM via OpenRouter → extracts JSON |
+| **this CLI** | Receives JSON → stores in DB → enriches with Google Places → answers queries in Simplified Chinese |
+
+The CLI does **no LLM calls**. All AI work is done by nanobot before calling `ingest`.
 
 ---
 
 ## Prerequisites
 
 - Python 3.11+
-- Dependencies installed: `pip install -r requirements.txt`
-- `.env` file present with at minimum `OPENROUTER_API_KEY` set
-- Working directory: the folder containing `food_cli.py`
-
-**Key env vars for nanobot:**
-
-| Variable | Required | Notes |
-|---|---|---|
-| `OPENROUTER_API_KEY` | Yes | OpenRouter key — routes vision requests to the selected LLM |
-| `OPENROUTER_MODEL` | No | Vision-capable model slug (default `google/gemini-flash-1.5`). Nanobot can override per-session. |
-| `GOOGLE_PLACES_API_KEY` | No | Enables real ratings + Maps links; falls back to a search URL |
+- `pip install -r requirements.txt`
+- Working directory: folder containing `food_cli.py`
+- (Optional) `.env` with `GOOGLE_PLACES_API_KEY` for real ratings and Maps links
 
 ---
 
 ## Commands Reference
 
-### 1. Ingest a screenshot
+### 1. Store extracted shop data
 
 ```bash
-python food_cli.py ingest <image_path> [-l <location_hint>]
+python food_cli.py ingest '<json_string>' [-l <location>]
 ```
 
-| Argument | Type | Required | Description |
-|---|---|---|---|
-| `image_path` | string | Yes | Absolute or relative path to image (JPG/PNG/WEBP/GIF) |
-| `-l / --location` | string | No | Area hint if not visible in image (e.g. `芙蓉`, `Seremban`) |
+or via stdin:
 
-**When to use:** User sends a food photo or shop screenshot and wants it saved.
-
-**Example invocation:**
 ```bash
-python food_cli.py ingest /tmp/upload_1234.jpg -l 芙蓉
+echo '<json_string>' | python food_cli.py ingest
 ```
 
-**Output:** Human-readable Simplified Chinese confirmation with shop details.
+**JSON schema** (nanobot constructs this from LLM output):
+
+```json
+{
+  "shop_name":   "店铺名称（必填）",
+  "food_types":  ["食物类型1", "食物类型2"],
+  "location":    "地区，如：芙蓉、Seremban",
+  "address":     "完整地址（如可见）",
+  "description": "店铺特色或招牌菜简短描述"
+}
+```
+
+Only `shop_name` is required. Use `-l` to supply location when the LLM didn't extract one.
+
+**When to use:** After nanobot receives a food screenshot and the LLM returns extracted shop info.
+
+**Example nanobot invocation:**
+
+```bash
+python food_cli.py ingest '{"shop_name":"老爸肉骨茶","food_types":["肉骨茶"],"location":"芙蓉","description":"汤底浓郁，猪肋骨入味"}'
+```
 
 ---
 
@@ -55,31 +68,23 @@ python food_cli.py ingest /tmp/upload_1234.jpg -l 芙蓉
 python food_cli.py find "<food_type>" [-l <location>] [--json-output]
 ```
 
-| Argument | Type | Required | Description |
-|---|---|---|---|
-| `food_type` | string | Yes | Food name in Chinese or English (e.g. `肉骨茶`, `海南鸡饭`) |
-| `-l / --location` | string | No | Area filter (e.g. `芙蓉`, `Seremban`) |
-| `--json-output` | flag | No | Emit JSON array instead of formatted text |
+| Argument | Required | Description |
+|---|---|---|
+| `food_type` | Yes | Chinese or English (e.g. `肉骨茶`, `海南鸡饭`, `bak kut teh`) |
+| `-l / --location` | No | Area filter (e.g. `芙蓉`, `Seremban`) |
+| `--json-output` | No | Emit JSON array instead of formatted text |
+
+Search is substring-based: `鸡饭` matches `海南鸡饭`.
 
 **When to use:** User asks "芙蓉哪里有肉骨茶？" or "which shops near Seremban serve Hainanese chicken rice?"
 
-**Example invocations:**
+**Example:**
 ```bash
 python food_cli.py find "肉骨茶" -l 芙蓉
-python food_cli.py find "海南鸡饭" --json-output
 ```
 
-**Formatted output fields (each shop):**
-- 店名 — shop name
-- 食物类型 — food categories (pipe-separated)
-- 地区 — area / district
-- 地址 — full address (if available)
-- 评分 — star rating out of 5
-- Google 地图 — Google Maps URL (direct link or search URL)
-- 推荐理由 — editorial description / why it's good
-- 记录 ID — database ID
-
-**JSON output fields:** same keys as above plus `id`, `created_at`, `updated_at`, `google_place_id`.
+**Output per shop includes:**
+- 店名, 食物类型, 地区, 地址, 评分 (★ stars), Google 地图 URL, 推荐理由, 记录 ID
 
 ---
 
@@ -89,7 +94,7 @@ python food_cli.py find "海南鸡饭" --json-output
 python food_cli.py list [-l <location>] [--json-output]
 ```
 
-**When to use:** User asks for a general overview or "show me everything in Seremban".
+**When to use:** User asks for a general overview or "show me all shops in Seremban".
 
 ---
 
@@ -99,8 +104,6 @@ python food_cli.py list [-l <location>] [--json-output]
 python food_cli.py delete <shop_id>
 ```
 
-**When to use:** User says "remove that entry" or "delete shop ID 3".
-
 ---
 
 ### 5. Refresh Google Maps info
@@ -109,62 +112,76 @@ python food_cli.py delete <shop_id>
 python food_cli.py refresh <shop_id>
 ```
 
-**When to use:** User wants updated ratings/addresses for an existing record, or the record was added before `GOOGLE_PLACES_API_KEY` was configured.
+Re-queries Google Places for an existing record. Use if `GOOGLE_PLACES_API_KEY` was added after a shop was ingested.
 
 ---
 
 ## Typical Conversation Flows
 
-### Flow A — User sends a screenshot
+### Flow A — User sends a food screenshot
 
-1. Save the image attachment to a temp file (e.g. `/tmp/food_img.jpg`).
-2. Run: `python food_cli.py ingest /tmp/food_img.jpg -l <location if known>`
-3. Return the CLI output verbatim (already in Simplified Chinese).
+1. Nanobot calls LLM with the image and this prompt (adapt as needed):
+
+   > 请分析图片提取美食店铺信息，返回 JSON：{"shop_name","food_types","location","address","description"}，只返回 JSON。
+
+2. LLM returns JSON string.
+3. Nanobot runs:
+   ```bash
+   python food_cli.py ingest '<llm_json>' [-l <location_if_known>]
+   ```
+4. Return CLI stdout to user (already in Simplified Chinese).
 
 ### Flow B — User asks for a food recommendation
 
 User says: **"芙蓉哪里有好吃的肉骨茶？"**
 
-1. Run: `python food_cli.py find "肉骨茶" -l 芙蓉`
-2. If results found — return the formatted output, highlighting the Google Maps link and rating.
-3. If no results — reply: "数据库中暂无芙蓉地区肉骨茶的记录，请分享相关截图让我添加。"
+```bash
+python food_cli.py find "肉骨茶" -l 芙蓉
+```
 
-### Flow C — User asks for all shops in an area
+- Results found → relay output, highlight Google Maps link and rating.
+- No results → reply: "数据库中暂无芙蓉地区肉骨茶的记录，请分享相关截图让我添加。"
+
+### Flow C — User asks what's available in an area
 
 User says: **"芙蓉有哪些美食？"**
 
-1. Run: `python food_cli.py list -l 芙蓉`
-2. Summarise the list in Chinese, grouping by food type if helpful.
+```bash
+python food_cli.py list -l 芙蓉
+```
 
-### Flow D — Structured data needed
+### Flow D — Structured data for downstream processing
 
-Append `--json-output` to any `find` or `list` command, then parse the JSON array for downstream processing.
+```bash
+python food_cli.py find "肉骨茶" --json-output
+python food_cli.py list --json-output
+```
 
 ---
 
 ## Output Language
 
-All CLI output (except error messages directed to stderr) is in **Simplified Chinese**. The agent should relay this output directly without translation.
+All stdout is in **Simplified Chinese**. Relay it directly without translation.
 
 ---
 
 ## Error Handling
 
-| Exit code | Meaning | Suggested agent response |
+| Exit code | Meaning | Suggested response |
 |---|---|---|
 | 0 | Success | Return stdout to user |
-| 1 | Error (see stderr) | Relay the error message and ask user to clarify or retry |
+| 1 | Error (stderr has details) | Relay error, ask user to clarify or retry |
 
 Common errors:
-- `OPENROUTER_API_KEY is not set` — instruct user to set the env var
-- `找不到文件` — image path is wrong; ask user to resend
-- `未能识别出店铺信息` — image is unclear; ask for a better screenshot
+
+- `缺少必填字段 shop_name` — LLM extraction missed the shop name; ask for a clearer screenshot
+- `JSON 解析失败` — malformed JSON from LLM; retry extraction with a stricter prompt
+- `找不到 ID 为 X 的记录` — wrong shop ID; use `list` to check available IDs
 
 ---
 
 ## Data Notes
 
-- Database is a local SQLite file (`food_locations.db` by default, configurable via `FOOD_DB_PATH`).
-- Food type search is substring-based — searching `鸡饭` will match `海南鸡饭`.
+- Local SQLite file (`food_locations.db` by default, set `FOOD_DB_PATH` to override).
 - Location search matches both `location` (district) and `address` fields.
-- Google Maps URLs are direct `https://maps.google.com/` links when `GOOGLE_PLACES_API_KEY` is set, or `https://www.google.com/maps/search/...` search URLs otherwise.
+- Google Maps URL is a direct `https://maps.google.com/` link when `GOOGLE_PLACES_API_KEY` is set, or a `https://www.google.com/maps/search/...` search URL otherwise.

@@ -1,54 +1,77 @@
 # 美食地点助手 (Food Location CLI)
 
-A CLI tool that reads food screenshots, extracts shop metadata with Claude Vision, and lets you query shops by food type and area — responses in Simplified Chinese.
+A CLI tool for storing and querying food shop records. Screenshot analysis and LLM interaction are handled entirely by the nanobot agent — this tool focuses on persistence and lookup.
+
+## Architecture
+
+```
+User screenshot
+      │
+      ▼
+  nanobot agent
+  (LLM via OpenRouter)
+      │  extracts JSON
+      ▼
+python food_cli.py ingest '<json>'
+      │
+      ├─► Google Places API  (rating, address, official Maps URL)
+      │   or Maps search URL (fallback, no API key needed)
+      │
+      ▼
+  SQLite database
+      │
+python food_cli.py find / list
+      │
+      ▼
+  Simplified Chinese output
+```
 
 ## Quick Start
 
 ```bash
-# 1. Install dependencies
 pip install -r requirements.txt
-
-# 2. Copy and fill in environment variables
-cp .env.example .env
-# Edit .env — set at minimum ANTHROPIC_API_KEY
-
-# 3. Run
-python food_cli.py --help
+cp .env.example .env   # optional: add GOOGLE_PLACES_API_KEY
 ```
 
 ## Environment Variables
 
 | Variable | Required | Description |
 |---|---|---|
-| `OPENROUTER_API_KEY` | Yes | OpenRouter API key — routes vision requests to your chosen LLM |
-| `OPENROUTER_MODEL` | No | Model to use for vision extraction (default: `google/gemini-flash-1.5`). Any vision-capable model on OpenRouter works, e.g. `anthropic/claude-sonnet-4-5`, `openai/gpt-4o` |
 | `GOOGLE_PLACES_API_KEY` | No | Google Places (New) API key — enables real ratings, addresses, and Maps links. Without it, a Google Maps search URL is generated instead. |
 | `FOOD_DB_PATH` | No | Path to the SQLite database file (default: `food_locations.db` in CWD) |
 
 ## Commands
 
-### `ingest` — Add a shop from a screenshot
+### `ingest` — Store extracted shop data
+
+Accepts a JSON string as an argument or via stdin.
 
 ```bash
-python food_cli.py ingest <image_path> [-l LOCATION]
+python food_cli.py ingest '<json>' [-l LOCATION]
+echo '<json>' | python food_cli.py ingest
 ```
 
-- `image_path` — local path to a JPG, PNG, WEBP, or GIF screenshot
-- `-l / --location` — optional area hint (e.g. `芙蓉`, `Seremban`) used if the image does not show a location
+**JSON schema** (produced by the LLM extraction step in nanobot):
+
+```json
+{
+  "shop_name":   "店铺名称",
+  "food_types":  ["食物类型1", "食物类型2"],
+  "location":    "地区（如：芙蓉）",
+  "address":     "完整地址（可选）",
+  "description": "招牌菜或店铺特色（可选）"
+}
+```
+
+Only `shop_name` is required. The `-l / --location` flag fills in `location` if omitted from the JSON.
 
 **Example:**
 
 ```bash
-python food_cli.py ingest ~/screenshots/bkt_shop.jpg -l Seremban
+python food_cli.py ingest '{"shop_name":"老爸肉骨茶","food_types":["肉骨茶","猪杂汤"],"location":"芙蓉","description":"汤底浓郁，猪肋骨入味"}'
 ```
 
-**Output (Simplified Chinese):**
-
 ```
-正在分析图片：bkt_shop.jpg …
-已识别店铺：老爸肉骨茶（芙蓉）
-正在查询 Google 地图信息 …
-
 已成功储存：
 
 店名      : 老爸肉骨茶
@@ -57,43 +80,28 @@ python food_cli.py ingest ~/screenshots/bkt_shop.jpg -l Seremban
 地址      : No 12, Jalan Yam Tuan, Seremban
 评分      : ★★★★☆  4.2/5
 Google 地图: https://maps.google.com/?cid=...
-推荐理由  : 芙蓉老字号肉骨茶，汤底浓郁，猪肋骨入味
+推荐理由  : 汤底浓郁，猪肋骨入味
 记录 ID   : 1
 ```
 
 ---
 
-### `find` — Query shops by food type
+### `find` — Query by food type
 
 ```bash
 python food_cli.py find <food_type> [-l LOCATION] [--json-output]
 ```
 
-- `food_type` — Chinese or English food name (e.g. `肉骨茶`, `海南鸡饭`, `bak kut teh`)
-- `-l / --location` — filter by area (e.g. `芙蓉`, `Seremban`)
-- `--json-output` — emit raw JSON (used by nanobot agents)
-
-**Example:**
+Search is substring-based: `鸡饭` matches `海南鸡饭`.
 
 ```bash
 python food_cli.py find 肉骨茶 -l 芙蓉
-```
-
-```
-找到 2 家店铺提供「肉骨茶」（芙蓉 地区）：
-
-── 第 1 家 ──
-店名      : 老爸肉骨茶
-...
-
-── 第 2 家 ──
-店名      : 明记肉骨茶
-...
+python food_cli.py find "bak kut teh" --json-output
 ```
 
 ---
 
-### `list` — List all stored shops
+### `list` — List all shops
 
 ```bash
 python food_cli.py list [-l LOCATION] [--json-output]
@@ -101,7 +109,7 @@ python food_cli.py list [-l LOCATION] [--json-output]
 
 ---
 
-### `delete` — Remove a shop by ID
+### `delete` — Remove a record
 
 ```bash
 python food_cli.py delete <shop_id>
@@ -109,36 +117,19 @@ python food_cli.py delete <shop_id>
 
 ---
 
-### `refresh` — Update Google Maps info for an existing shop
+### `refresh` — Update Google Maps info
 
 ```bash
 python food_cli.py refresh <shop_id>
 ```
 
-Requires `GOOGLE_PLACES_API_KEY`. Useful if a shop was ingested before the API key was configured.
+Requires `GOOGLE_PLACES_API_KEY`. Useful if a shop was ingested before the key was configured.
 
 ---
-
-## How It Works
-
-```
-screenshot ──► Claude Vision ──► extracted JSON
-                                     │
-                              Google Places API
-                              (or Maps search URL)
-                                     │
-                               SQLite database
-                                     │
-                          find / list ──► Simplified Chinese output
-```
-
-1. **`ingest`** sends the image to the configured OpenRouter model (default: `google/gemini-flash-1.5`) which extracts shop name, food types, location, address, and a description in Simplified Chinese. The model is selectable via `OPENROUTER_MODEL`.
-2. The tool enriches the record with Google Places data (rating, official Maps URL, editorial summary) if `GOOGLE_PLACES_API_KEY` is set.
-3. Everything is stored in a local SQLite database (`food_locations.db` by default).
-4. **`find`** performs a full-text substring search across `food_types`, `shop_name`, `description`, and optionally filters by `location` / `address`.
 
 ## Notes
 
 - The database is a plain SQLite file — back it up by copying the `.db` file.
-- All user-facing output is in Simplified Chinese; use `--json-output` for machine-readable results.
+- All user-facing output is in Simplified Chinese.
+- `--json-output` on `find` and `list` emits a JSON array for downstream processing.
 - The `GOOGLE_PLACES_API_KEY` needs the **Places API (New)** product enabled in Google Cloud Console.
