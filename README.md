@@ -20,7 +20,8 @@ python food_cli.py --help
 
 | Variable | Required | Description |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Yes | Claude API key — used for screenshot vision analysis |
+| `OPENROUTER_API_KEY` | Yes | OpenRouter API key — routes vision requests to your chosen LLM |
+| `OPENROUTER_MODEL` | No | Model to use for vision extraction (default: `google/gemini-flash-1.5`). Any vision-capable model on OpenRouter works, e.g. `anthropic/claude-sonnet-4-5`, `openai/gpt-4o` |
 | `GOOGLE_PLACES_API_KEY` | No | Google Places (New) API key — enables real ratings, addresses, and Maps links. Without it, a Google Maps search URL is generated instead. |
 | `FOOD_DB_PATH` | No | Path to the SQLite database file (default: `food_locations.db` in CWD) |
 
@@ -131,7 +132,7 @@ screenshot ──► Claude Vision ──► extracted JSON
                           find / list ──► Simplified Chinese output
 ```
 
-1. **`ingest`** sends the image to Claude (claude-sonnet-4-6) which extracts shop name, food types, location, address, and a description in Simplified Chinese.
+1. **`ingest`** sends the image to the configured OpenRouter model (default: `google/gemini-flash-1.5`) which extracts shop name, food types, location, address, and a description in Simplified Chinese. The model is selectable via `OPENROUTER_MODEL`.
 2. The tool enriches the record with Google Places data (rating, official Maps URL, editorial summary) if `GOOGLE_PLACES_API_KEY` is set.
 3. Everything is stored in a local SQLite database (`food_locations.db` by default).
 4. **`find`** performs a full-text substring search across `food_types`, `shop_name`, `description`, and optionally filters by `location` / `address`.

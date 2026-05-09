@@ -1,4 +1,4 @@
-"""Extract food-shop metadata from a screenshot using Claude Vision."""
+"""Extract food-shop metadata from a screenshot via OpenRouter (OpenAI-compatible)."""
 
 import base64
 import json
@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Any, Optional
 
-import anthropic
+from openai import OpenAI
 
 _MEDIA_TYPES: dict[str, str] = {
     ".jpg":  "image/jpeg",
@@ -15,6 +15,8 @@ _MEDIA_TYPES: dict[str, str] = {
     ".gif":  "image/gif",
     ".webp": "image/webp",
 }
+
+_DEFAULT_MODEL = "google/gemini-flash-1.5"
 
 _PROMPT = """\
 请分析这张图片，提取美食店铺相关信息{location_ctx}。
@@ -40,40 +42,40 @@ def extract_from_screenshot(
     location_hint: Optional[str] = None,
 ) -> Optional[dict[str, Any]]:
     """Return extracted shop info dict, or None on failure."""
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    api_key = os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
-        raise EnvironmentError("ANTHROPIC_API_KEY is not set.")
+        raise EnvironmentError("OPENROUTER_API_KEY is not set.")
+
+    model = os.environ.get("OPENROUTER_MODEL", _DEFAULT_MODEL)
 
     path = Path(image_path)
     media_type = _MEDIA_TYPES.get(path.suffix.lower(), "image/jpeg")
-    image_data = base64.standard_b64encode(path.read_bytes()).decode()
+    b64 = base64.standard_b64encode(path.read_bytes()).decode()
+    data_url = f"data:{media_type};base64,{b64}"
 
     location_ctx = f"（用户提示地区：{location_hint}）" if location_hint else ""
     prompt_text = _PROMPT.format(location_ctx=location_ctx)
 
-    client = anthropic.Anthropic(api_key=api_key)
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=1024,
+    client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=api_key,
+    )
+
+    response = client.chat.completions.create(
+        model=model,
         messages=[
             {
                 "role": "user",
                 "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": media_type,
-                            "data": image_data,
-                        },
-                    },
+                    {"type": "image_url", "image_url": {"url": data_url}},
                     {"type": "text", "text": prompt_text},
                 ],
             }
         ],
+        max_tokens=1024,
     )
 
-    raw = response.content[0].text.strip()
+    raw = response.choices[0].message.content.strip()
 
     # Strip markdown code fences if present
     if "```" in raw:

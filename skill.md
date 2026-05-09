@@ -12,8 +12,16 @@ The underlying tool is a Python CLI (`food_cli.py`) backed by a local SQLite dat
 
 - Python 3.11+
 - Dependencies installed: `pip install -r requirements.txt`
-- `.env` file present with at minimum `ANTHROPIC_API_KEY` set
+- `.env` file present with at minimum `OPENROUTER_API_KEY` set
 - Working directory: the folder containing `food_cli.py`
+
+**Key env vars for nanobot:**
+
+| Variable | Required | Notes |
+|---|---|---|
+| `OPENROUTER_API_KEY` | Yes | OpenRouter key — routes vision requests to the selected LLM |
+| `OPENROUTER_MODEL` | No | Vision-capable model slug (default `google/gemini-flash-1.5`). Nanobot can override per-session. |
+| `GOOGLE_PLACES_API_KEY` | No | Enables real ratings + Maps links; falls back to a search URL |
 
 ---
 
@@ -148,7 +156,7 @@ All CLI output (except error messages directed to stderr) is in **Simplified Chi
 | 1 | Error (see stderr) | Relay the error message and ask user to clarify or retry |
 
 Common errors:
-- `ANTHROPIC_API_KEY is not set` — instruct user to configure `.env`
+- `OPENROUTER_API_KEY is not set` — instruct user to set the env var
 - `找不到文件` — image path is wrong; ask user to resend
 - `未能识别出店铺信息` — image is unclear; ask for a better screenshot
 
