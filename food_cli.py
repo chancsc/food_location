@@ -13,7 +13,7 @@ import click
 from dotenv import load_dotenv
 
 from database import FoodDatabase
-from places import fallback_maps_search_url, search_google_places
+from places import fallback_maps_search_url, lookup_by_url, search_google_places
 
 load_dotenv()
 
@@ -189,6 +189,64 @@ def list_shops(location: str | None, json_output: bool):
         click.echo(f"---\n")
         click.echo(_format_shop_card(shop))
         click.echo()
+
+
+@cli.command()
+@click.argument("name_or_url")
+@click.option("-l", "--location", default=None, help="地区提示（如：芙蓉、Seremban）")
+@click.option("-t", "--food-type", "food_types", multiple=True,
+              help="食物类型标签，可多次指定（如：-t 肉骨茶 -t 猪杂汤）")
+def lookup(name_or_url: str, location: str | None, food_types: tuple):
+    """通过店铺名称或 Google Maps URL 自动查找并储存店铺信息。
+
+    NAME_OR_URL 可以是：
+      - 店铺名称（如：老爸肉骨茶）
+      - Google Maps 链接（如：https://maps.google.com/...）
+
+    \b
+    示例：
+      python food_cli.py lookup "老爸肉骨茶" -l 芙蓉
+      python food_cli.py lookup "https://maps.google.com/?cid=1234" -t 肉骨茶
+    """
+    is_url = name_or_url.startswith("http://") or name_or_url.startswith("https://")
+
+    if is_url:
+        click.echo(f"正在从 URL 查询店铺信息 …")
+        google_info = lookup_by_url(name_or_url)
+        if not google_info and not _api_key_set():
+            click.echo("错误：URL 查询需要 GOOGLE_PLACES_API_KEY。", err=True)
+            sys.exit(1)
+    else:
+        click.echo(f"正在搜索「{name_or_url}」{('（' + location + '）') if location else ''} …")
+        google_info = search_google_places(name_or_url, location or "")
+        if not google_info:
+            if not _api_key_set():
+                click.echo("提示：未配置 GOOGLE_PLACES_API_KEY，以名称创建基础记录。")
+            else:
+                click.echo("Google 地图未找到该店铺，以名称创建基础记录。")
+
+    # Build the extracted record from whatever we got back
+    extracted: dict = {}
+    if google_info:
+        extracted["shop_name"]   = google_info.pop("shop_name", None) or name_or_url
+        extracted["food_types"]  = list(food_types) or google_info.pop("food_types", [])
+        extracted["location"]    = location or ""
+    else:
+        extracted["shop_name"]  = name_or_url
+        extracted["food_types"] = list(food_types)
+        extracted["location"]   = location or ""
+        google_info = {"google_maps_url": fallback_maps_search_url(name_or_url, location or "")}
+
+    db = _db()
+    shop_id = db.add_shop(extracted, google_info)
+    shop = db.get_shop(shop_id)
+
+    click.echo("\n✅ 已成功储存\n")
+    click.echo(_format_shop_card(shop))
+
+
+def _api_key_set() -> bool:
+    return bool(os.environ.get("GOOGLE_PLACES_API_KEY"))
 
 
 @cli.command()

@@ -60,9 +60,38 @@ Only `shop_name` is required. Use `-l` to supply location when the LLM didn't ex
 python food_cli.py ingest '{"shop_name":"老爸肉骨茶","food_types":["肉骨茶"],"location":"芙蓉","description":"汤底浓郁，猪肋骨入味"}'
 ```
 
+**Auto-enrichment:** every `ingest` call automatically queries Google Places (if `GOOGLE_PLACES_API_KEY` is set) to fill in address, rating, and Maps URL — even if the LLM only returned a shop name.
+
 ---
 
-### 2. Find shops by food type
+### 2. Look up a shop by name or URL (no screenshot needed)
+
+```bash
+python food_cli.py lookup "<name_or_url>" [-l <location>] [-t <food_type>]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name_or_url` | Yes | Shop name (e.g. `老爸肉骨茶`) or a Google Maps URL |
+| `-l / --location` | No | Area hint (e.g. `芙蓉`) |
+| `-t / --food-type` | No | Food type tag, repeatable (e.g. `-t 肉骨茶 -t 猪杂汤`) |
+
+**When to use:**
+- User mentions a shop name without a screenshot
+- User pastes a Google Maps link
+- Nanobot extracts a Maps URL from conversation and wants to store it
+
+**Examples:**
+```bash
+python food_cli.py lookup "老爸肉骨茶" -l 芙蓉 -t 肉骨茶
+python food_cli.py lookup "https://maps.google.com/?place_id=ChIJ..."
+```
+
+Without `GOOGLE_PLACES_API_KEY`, creates a basic record with a Maps search URL.
+
+---
+
+### 3. Find shops by food type
 
 ```bash
 python food_cli.py find "<food_type>" [-l <location>] [--json-output]
@@ -88,7 +117,7 @@ python food_cli.py find "肉骨茶" -l 芙蓉
 
 ---
 
-### 3. List all shops
+### 4. List all shops
 
 ```bash
 python food_cli.py list [-l <location>] [--json-output]
@@ -98,7 +127,7 @@ python food_cli.py list [-l <location>] [--json-output]
 
 ---
 
-### 4. Delete a shop
+### 5. Delete a shop
 
 ```bash
 python food_cli.py delete <shop_id>
@@ -106,7 +135,7 @@ python food_cli.py delete <shop_id>
 
 ---
 
-### 5. Refresh Google Maps info
+### 6. Refresh Google Maps info
 
 ```bash
 python food_cli.py refresh <shop_id>
@@ -150,7 +179,22 @@ User says: **"芙蓉有哪些美食？"**
 python food_cli.py list -l 芙蓉
 ```
 
-### Flow D — Structured data for downstream processing
+### Flow D — User mentions a shop name or pastes a Maps link
+
+User says: **"我知道芙蓉有一家叫老爸肉骨茶，帮我加进去"**
+or pastes a Google Maps URL.
+
+```bash
+# By name
+python food_cli.py lookup "老爸肉骨茶" -l 芙蓉 -t 肉骨茶
+
+# By URL
+python food_cli.py lookup "https://maps.google.com/?place_id=ChIJ..."
+```
+
+CLI auto-fetches address, rating, and Maps link from Google Places and stores the record.
+
+### Flow E — Structured data for downstream processing
 
 ```bash
 python food_cli.py find "肉骨茶" --json-output
