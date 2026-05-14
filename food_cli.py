@@ -228,9 +228,10 @@ def lookup(name_or_url: str, location: str | None, food_types: tuple):
     # Build the extracted record from whatever we got back
     extracted: dict = {}
     if google_info:
-        extracted["shop_name"]   = google_info.pop("shop_name", None) or name_or_url
-        extracted["food_types"]  = list(food_types) or google_info.pop("food_types", [])
-        extracted["location"]    = location or ""
+        extracted["shop_name"]  = google_info.pop("shop_name", None) or name_or_url
+        extracted["food_types"] = list(food_types) or google_info.pop("food_types", [])
+        # Prefer explicit --location flag; fall back to what Google returned
+        extracted["location"]   = location or google_info.pop("location", "") or ""
     else:
         extracted["shop_name"]  = name_or_url
         extracted["food_types"] = list(food_types)

@@ -62,6 +62,8 @@ class FoodDatabase:
             google_place_id = google_info.get("place_id")
             if not address:
                 address = google_info.get("address") or ""
+            if not location:
+                location = google_info.get("location") or ""
             if not description:
                 description = google_info.get("description") or ""
 

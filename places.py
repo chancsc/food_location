@@ -13,13 +13,15 @@ _FIELD_MASK  = (
     "places.id,"
     "places.displayName,"
     "places.formattedAddress,"
+    "places.addressComponents,"
     "places.rating,"
     "places.googleMapsUri,"
     "places.editorialSummary,"
     "places.types"
 )
 _DETAIL_MASK = (
-    "id,displayName,formattedAddress,rating,googleMapsUri,editorialSummary,types"
+    "id,displayName,formattedAddress,addressComponents,"
+    "rating,googleMapsUri,editorialSummary,types"
 )
 
 # Patterns that can carry a Place ID inside a Google Maps URL
@@ -41,17 +43,33 @@ def _headers(mask: str) -> dict:
 
 
 def _place_to_dict(place: dict) -> dict[str, Any]:
-    editorial = place.get("editorialSummary") or {}
-    types = place.get("types") or []
+    editorial   = place.get("editorialSummary") or {}
+    types       = place.get("types") or []
+    components  = place.get("addressComponents") or []
     return {
         "place_id":        place.get("id"),
         "shop_name":       (place.get("displayName") or {}).get("text"),
         "address":         place.get("formattedAddress"),
+        "location":        _extract_locality(components),
         "rating":          place.get("rating"),
         "google_maps_url": place.get("googleMapsUri"),
         "description":     editorial.get("text"),
         "food_types":      _types_to_zh(types),
     }
+
+
+def _extract_locality(components: list[dict]) -> Optional[str]:
+    """Return the city/town name from addressComponents (locality → level_2 → level_1)."""
+    priority = ("locality", "administrative_area_level_2", "administrative_area_level_1")
+    bucket: dict[str, str] = {}
+    for comp in components:
+        for t in comp.get("types") or []:
+            if t in priority and t not in bucket:
+                bucket[t] = comp.get("longText") or comp.get("shortText") or ""
+    for key in priority:
+        if bucket.get(key):
+            return bucket[key]
+    return None
 
 
 # Rough mapping of Google place types to Chinese food categories
